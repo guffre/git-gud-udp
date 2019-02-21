@@ -68,6 +68,8 @@ class GGUdp(object):
     
     def send(self, data):
         data = bytearray(data)
+        if len(data) <= 1:
+            data += "pad"
         # SYNC LOOP
         timeout = 5
         while timeout <= 15:
