@@ -29,7 +29,7 @@ MAX_RETRY_TIMEOUT = 10
 #     16          4          X
 # [CHECKSUM][PACKET_NUMBER][DATA]
 
-class gudp(object):
+class GGUdp(object):
     def __init__(self, ip, port, server=False):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.ip = ip
@@ -64,11 +64,6 @@ class gudp(object):
         data_chunk   = data[LEN_CHECKSUM+LEN_PACKET_NUM:]
         if self._checksum(data[LEN_CHECKSUM:]) == checksum:
             return (packet_index, data_chunk)
-        print("returning FALSE")
-        print("checksum]{}".format(repr(checksum)))
-        print("packet_index]{}".format(repr(packet_index)))
-        print("data_chunk]{}".format(repr(data_chunk)))
-        print("calcchksum]{}".format(repr(self._checksum(data[LEN_CHECKSUM:]))))
         return (-1, bytearray("0"))
     
     def send(self, data):
@@ -130,10 +125,16 @@ class gudp(object):
             else:
                 print("Bad packet order? No missing packets packet missed.")
                 break
+
+        tmp = self._recv(TIMEOUT_NO_WAIT)
+        while tmp != "TIMEOUT":
+            tmp = self._recv(TIMEOUT_NO_WAIT)
+        return True
     
     def recv(self, timeout=CONNECT_TIMEOUT):
         # SYNC LOOP
         if self.server: # Server should not timeout when receiving
+            self.s.setblocking(1)
             len_data,self.addr = self.s.recvfrom(MAX_PACKET_SIZE)
         else:
             len_data = self._recv(timeout)
@@ -166,7 +167,10 @@ class gudp(object):
             missing = [MISSING_PACKETS]
             # Get list of missing chunks
             if not d_max:
-                d_max = max(data)+missing_packet_max
+                try:
+                    d_max = max(data)+missing_packet_max
+                except:
+                    d_max = missing_packet_max
             for i in range(d_max):
                 if i not in data:
                     missing.append(self.struct_pack(i))
@@ -197,9 +201,12 @@ class gudp(object):
         else: # No missing packets
             self._send(str(MISSING_PACKETS))
             self._send(str(MISSING_PACKETS))
-        print("Received]{}".format(received))
-        print("len_data]{}".format(len_data))
-        return ''.join(data[n] for n in sorted(data))
+
+        tmp = self._recv(TIMEOUT_NO_WAIT)
+        while tmp != "TIMEOUT":
+            tmp = self._recv(TIMEOUT_NO_WAIT)
+
+        return bytearray(''.join(data[n] for n in sorted(data)))
     
     def _checksum(self, data):
         return bytearray(hashlib.md5(data).digest())
@@ -217,16 +224,15 @@ class gudp(object):
                     break
                 except:
                     print("error")
-                    data = "TIMEOUT"
-                    break
+                    time.sleep(0.1)
             self.s.setblocking(1)
         else:
             data = "TIMEOUT"
-        return data   
+        return data
 
 if __name__ == '__main__':
     if sys.argv[1] == "s":
-        s = gudp("0.0.0.0", 8000, True)
+        s = GGUdp("0.0.0.0", 8000, True)
         while True:
             data = s.recv()
             if data:
@@ -236,7 +242,7 @@ if __name__ == '__main__':
                     f.write(data)
                     print("File downloaded to: {}".format(tmpfile))
     else:
-        s = gudp("127.0.0.1", 8000)
+        s = GGUdp("127.0.0.1", 8000)
         with open(r"X:\cab1.cab", "rb") as f:
             data = f.read()
         s.send(data)

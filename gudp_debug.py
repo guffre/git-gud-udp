@@ -29,7 +29,7 @@ MAX_RETRY_TIMEOUT = 10
 #     16          4          X
 # [CHECKSUM][PACKET_NUMBER][DATA]
 
-class gudp(object):
+class GGUdp(object):
     def __init__(self, ip, port, server=False):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.ip = ip
@@ -140,11 +140,18 @@ class gudp(object):
             else:
                 print("Bad packet order? No missing packets packet missed.")
                 break
+
+        tmp = self._recv(TIMEOUT_NO_WAIT)
+        while tmp != "TIMEOUT":
+            tmp = self._recv(TIMEOUT_NO_WAIT)
+            print("flushing: {}".format(repr(tmp)))
+        return True
     
     def recv(self, timeout=CONNECT_TIMEOUT):
         # SYNC LOOP
         if self.server: # Server should not timeout when receiving
             print("server recv")
+            self.s.setblocking(1)
             len_data,self.addr = self.s.recvfrom(MAX_PACKET_SIZE)
             #print("recv->send]{}".format(repr(len_data)))
         else:
@@ -187,7 +194,10 @@ class gudp(object):
             missing = [MISSING_PACKETS]
             # Get list of missing chunks
             if not d_max:
-                d_max = max(data)+missing_packet_max
+                try:
+                    d_max = max(data)+missing_packet_max
+                except:
+                    d_max = missing_packet_max
                 print("dmax]{}".format(repr(d_max)))
             for i in range(d_max):
                 if i not in data:
@@ -231,7 +241,13 @@ class gudp(object):
             self._send(str(MISSING_PACKETS))
         print("DONE? Received]{}".format(received))
         print("DONE? len_data]{}".format(len_data))
-        return ''.join(data[n] for n in sorted(data))
+
+        tmp = self._recv(TIMEOUT_NO_WAIT)
+        while tmp != "TIMEOUT":
+            tmp = self._recv(TIMEOUT_NO_WAIT)
+            print("flushing: {}".format(repr(tmp)))
+
+        return bytearray(''.join(data[n] for n in sorted(data)))
     
     def _checksum(self, data):
         return bytearray(hashlib.md5(data).digest())
@@ -257,11 +273,11 @@ class gudp(object):
         else:
             print("TIMEOUT")
             data = "TIMEOUT"
-        return data   
+        return data
 
 if __name__ == '__main__':
     if sys.argv[1] == "s":
-        s = gudp("0.0.0.0", 8000, True)
+        s = GGUdp("0.0.0.0", 8000, True)
         while True:
             data = s.recv()
             if data:
@@ -271,7 +287,7 @@ if __name__ == '__main__':
                     f.write(data)
                     print("File downloaded to: {}".format(tmpfile))
     else:
-        s = gudp("127.0.0.1", 8000)
+        s = GGUdp("127.0.0.1", 8000)
         with open(r"X:\cab1.cab", "rb") as f:
             data = f.read()
         s.send(data)
