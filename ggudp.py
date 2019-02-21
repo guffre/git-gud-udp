@@ -156,9 +156,12 @@ class GGUdp(object):
                 data[packet_index] = data_chunk
                 received += len(data_chunk)
 
-        # Clear receive buffer of DONE_SENDING and get missing_packet sync        
-        while data_chunk == DONE_SENDING:
-            data_chunk = self._recv(TIMEOUT_NO_WAIT)
+        # Clear receive buffer of DONE_SENDING and get missing_packet sync
+        try:
+            while data_chunk == DONE_SENDING:
+                data_chunk = self._recv(TIMEOUT_NO_WAIT)
+        except:
+            pass
         # SEND REREQUESTS
         d_max = 0
         retries = MAX_RETRY_TIMEOUT

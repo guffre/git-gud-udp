@@ -180,9 +180,13 @@ class GGUdp(object):
             print("received]{}".format(received))
             print("len_data]{}".format(len_data))
 
-        # Clear receive buffer of DONE_SENDING and get missing_packet sync        
-        while data_chunk == DONE_SENDING:
-            data_chunk = self._recv(1)
+        # Clear receive buffer of DONE_SENDING and get missing_packet sync
+        try:
+            while data_chunk == DONE_SENDING:
+                data_chunk = self._recv(1)
+        except:
+            print("no data chunk")
+            pass
         #print("\ndata]{}\n".format(repr(data)))
         # SEND REREQUESTS
         print("retrying")
