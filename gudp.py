@@ -22,6 +22,7 @@ TIMEOUT_NO_WAIT = 0.05
 MAX_PACKET_SIZE = 4096
 MIN_DATA_SIZE   = 500
 MAX_DATA_SIZE   = MAX_PACKET_SIZE - LEN_CHECKSUM - LEN_PACKET_NUM
+MAX_RETRY_TIMEOUT = 10
 
 # PACKET:
 #
@@ -88,8 +89,6 @@ class gudp(object):
         data_index   = 0
         packet_index = 0
         data_chunks = dict()
-        #TODO: REMOVE DELETE GET RID OF THIS LINE:
-        TEST_SKIP = True
         while data_index < len(data):
             # Assemble packet data
             pktsize    = random.randint(MIN_DATA_SIZE, MAX_DATA_SIZE)
@@ -101,6 +100,11 @@ class gudp(object):
             # Increment counters
             data_index   += pktsize
             packet_index += 1
+            #0.001 = ~1.5MB/s, python wont sleep any shorter than this
+            # Testing with a 1gig up connection across the world, packet loss is too high to be efficient
+            # So, I lower the speed here. This ends up ~9MB/s and minimal packet loss.
+            if packet_index%5 == 0:
+                time.sleep(0.001)
         self._send(bytearray(DONE_SENDING))
         self._send(bytearray(DONE_SENDING))
         
@@ -156,7 +160,8 @@ class gudp(object):
             data_chunk = self._recv(TIMEOUT_NO_WAIT)
         # SEND REREQUESTS
         d_max = 0
-        while received != len_data:
+        retries = MAX_RETRY_TIMEOUT
+        while (received != len_data) and retries >= 0:
             missing_packet_max = 1+((len_data - received)/MIN_DATA_SIZE)
             missing = [MISSING_PACKETS]
             # Get list of missing chunks
@@ -177,8 +182,10 @@ class gudp(object):
                     d_max = min(d_max, self.struct_unpack(data_chunk[len(OUT_OF_RANGE):])[0])
                     break
                 if data_chunk == "TIMEOUT":
+                    retries -= 1
                     break
                 else:
+                    retries = MAX_RETRY_TIMEOUT
                     packet_index,data_chunk = self._unpack_packet(data_chunk)
                     if packet_index >= 0:
                         if data.get(packet_index, False):
@@ -210,7 +217,8 @@ class gudp(object):
                     break
                 except:
                     print("error")
-                    time.sleep(0.1)
+                    data = "TIMEOUT"
+                    break
             self.s.setblocking(1)
         else:
             data = "TIMEOUT"

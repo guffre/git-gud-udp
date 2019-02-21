@@ -22,6 +22,7 @@ TIMEOUT_NO_WAIT = 0.05
 MAX_PACKET_SIZE = 4096
 MIN_DATA_SIZE   = 500
 MAX_DATA_SIZE   = MAX_PACKET_SIZE - LEN_CHECKSUM - LEN_PACKET_NUM
+MAX_RETRY_TIMEOUT = 10
 
 # PACKET:
 #
@@ -92,8 +93,6 @@ class gudp(object):
         data_index   = 0
         packet_index = 0
         data_chunks = dict()
-        #TODO: REMOVE DELETE GET RID OF THIS LINE:
-        TEST_SKIP = True
         while data_index < len(data):
             # Assemble packet data
             pktsize    = random.randint(MIN_DATA_SIZE, MAX_DATA_SIZE)
@@ -102,13 +101,11 @@ class gudp(object):
             data_chunks[packet_index] = data_chunk
             # Send data
             print("send][{}][{}]".format(self.addr,packet_index))
-            if len(data_chunk) > 4000:
-                print("bytes]{}".format(len(data_chunk)))
-            if TEST_SKIP:
-                if random.randint(1,4) == 2:
-                    self._send(data_chunk)
-            else:
-                self._send(data_chunk)
+            #0.001 = ~1.5MB/s, python wont sleep any shorter than this
+            # Testing with a 1gig up connection across the world, packet loss is too high to be efficient
+            # So, I lower the speed here. This ends up ~9MB/s and minimal packet loss.
+            if packet_index%5 == 0:
+                time.sleep(0.001)
             # Increment counters
             data_index   += pktsize
             packet_index += 1
@@ -183,7 +180,8 @@ class gudp(object):
         # SEND REREQUESTS
         print("retrying")
         d_max = 0
-        while received != len_data:
+        retries = MAX_RETRY_TIMEOUT
+        while (received != len_data) and retries >= 0:
             missing_packet_max = 1+((len_data - received)/MIN_DATA_SIZE)
             print("missing_packet_max]{}".format(repr(missing_packet_max)))
             missing = [MISSING_PACKETS]
@@ -213,8 +211,10 @@ class gudp(object):
                     print("OUT OF RANGE: {}".format(d_max))
                     break
                 if data_chunk == "TIMEOUT":
+                    retries -= 1
                     break
                 else:
+                    retries = MAX_RETRY_TIMEOUT
                     packet_index,data_chunk = self._unpack_packet(data_chunk)
                     print("got a packet:{}|{}b".format(packet_index, len(data_chunk)))
                     if packet_index >= 0:
@@ -271,7 +271,7 @@ if __name__ == '__main__':
                     f.write(data)
                     print("File downloaded to: {}".format(tmpfile))
     else:
-        s = gudp("68.183.72.218", 8000)
-        with open(r"X:\muse.mp3", "rb") as f:
+        s = gudp("127.0.0.1", 8000)
+        with open(r"X:\cab1.cab", "rb") as f:
             data = f.read()
         s.send(data)
