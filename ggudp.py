@@ -2,9 +2,7 @@ import random
 import select
 import socket
 import struct
-import sys
 import time
-import tempfile
 import hashlib
 
 # PACKET:
@@ -270,21 +268,3 @@ class GGUdp(object):
         # TIMEOUT_NO_WAIT = 0.05
         # SEND_REREQUEST_TIMEOUT = 15
         # RECV_REREQUEST_TIMEOUT = 3.5
-
-if __name__ == '__main__':
-    if sys.argv[1] == "s":
-        s = GGUdp("0.0.0.0", 8000)
-        s.bind()
-        while True:
-            data = s.recv()
-            if data:
-                print("Got [{}] bytes".format(len(data)))
-                tmpfile = tempfile.mktemp()
-                with open(tmpfile, "wb") as f:
-                    f.write(data)
-                    print("File downloaded to: {}".format(tmpfile))
-    else:
-        s = GGUdp("46.101.242.248", 8000)
-        with open(r"X:\cab1.cab", "rb") as f:
-            data = f.read()
-        s.send(data)
