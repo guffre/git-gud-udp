@@ -91,8 +91,6 @@ class GGUdp(object):
             # So, I lower the speed here. This ends up ~2.1MB/s and minimal packet loss.
             if packet_index%10 == 0:
                 time.sleep(0.001)
-        time.sleep(0.1)
-        self._send(self.DONE_SENDING)
         self._send(self.DONE_SENDING)
         
         # HANDLE REREQUESTS
@@ -128,14 +126,20 @@ class GGUdp(object):
             tmp = self._recv(self.TIMEOUT_NO_WAIT)
         return True
     
-    def recv(self):
+    def recv(self, timeout=False):
         # SYNC LOOP
-        self.s.setblocking(1)
-        if self.server:
-            len_data,self.addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
+        if timeout == False:
+            self.s.setblocking(1)
+            if self.server:
+                len_data,self.addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
+            else:
+                len_data,_ = self.s.recvfrom(self.MAX_PACKET_SIZE)
+            self.s.setblocking(0)
         else:
-            len_data,_ = self.s.recvfrom(self.MAX_PACKET_SIZE)
-        self.s.setblocking(0)
+            if self.server:
+                len_data,self.addr = self._recv(timeout, True)
+            else:
+                len_data = self._recv(timeout)
         try:
             len_data = int(len_data)
             self._send(bytearray(str(len_data)))
@@ -203,7 +207,6 @@ class GGUdp(object):
                 break
         else: # No missing packets
             self._send(str(self.MISSING_PACKETS))
-            self._send(str(self.MISSING_PACKETS))
 
         tmp = self._recv(self.TIMEOUT_NO_WAIT)
         while tmp != "TIMEOUT":
@@ -221,15 +224,18 @@ class GGUdp(object):
     def _send(self, data):
         self.s.sendto(data, self.addr)
     
-    def _recv(self, timeout):
+    def _recv(self, timeout, setaddr=False):
         data = "TIMEOUT"
         try:
             ready = select.select([self.s], [], [], timeout)
             if ready[0]:
-                data,_ = self.s.recvfrom(self.MAX_PACKET_SIZE)
+                data,addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
         except:
             pass
-        return data
+        if setaddr:
+            return data,addr
+        else:
+            return data
     
     def define_globals(self):
         # Special packets
@@ -252,7 +258,7 @@ class GGUdp(object):
         self.REREQUEST_SAFETY  = 10
         self.SYNC_TIMEOUT      = 1
         self.RECV_LOOP_TIMEOUT = 5
-        self.TIMEOUT_NO_WAIT   = 0.05
+        self.TIMEOUT_NO_WAIT   = 0.1
         self.SEND_REREQUEST_TIMEOUT = 8 # Must be higher than RECV_REREQUEST_TIMEOUT
         self.RECV_REREQUEST_TIMEOUT = 0.5
 
