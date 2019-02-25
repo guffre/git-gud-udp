@@ -18,7 +18,6 @@ class GGUdp(object):
         self.port = port
         self.addr = ((ip,port))
         self.server = False
-        self.s.setblocking(0)
     
     def bind(self):
         self.server = True
@@ -39,13 +38,13 @@ class GGUdp(object):
     def struct_unpack(self, data, format="I"):
             return struct.unpack(format, data)[0]
     
-    def _pack_packet(self, data, packet_index):
+    def add_header(self, data, packet_index):
         packet_number = self.struct_pack(packet_index)
         checksum      = self._checksum(packet_number + data)
         data_chunk    = "{}{}{}".format(checksum, packet_number, data)
         return data_chunk
     
-    def _unpack_packet(self, data):
+    def chk_header(self, data):
         try:
             packet_index_bytes = data[self.LEN_CHECKSUM:self.LEN_CHECKSUM+self.LEN_PACKET_NUM]
             checksum     = bytearray(data[:self.LEN_CHECKSUM])
@@ -64,7 +63,7 @@ class GGUdp(object):
         # SYNC LOOP
         for _ in range(3):
             self._send(bytearray(str(len(data))))
-            response = self._recv(self.SYNC_TIMEOUT)
+            response,_ = self._recv(self.SYNC_TIMEOUT)
             if response == bytearray(str(len(data))):
                 break
         else:
@@ -78,7 +77,7 @@ class GGUdp(object):
         while data_index < len(data):
             # Assemble packet data
             pktsize    = random.randint(self.MIN_DATA_SIZE, self.MAX_DATA_SIZE)
-            data_chunk = self._pack_packet(data[data_index:data_index+pktsize], packet_index)
+            data_chunk = self.add_header(data[data_index:data_index+pktsize], packet_index)
             # Add to chunk list
             data_chunks[packet_index] = data_chunk
             # Send data
@@ -86,18 +85,17 @@ class GGUdp(object):
             # Increment counters
             data_index   += pktsize
             packet_index += 1
-            #0.001 = ~200kb/s, python wont sleep any shorter than this
-            # Testing with a 1gig up connection across the world, packet loss is too high to be efficient
-            # So, I lower the speed here. This ends up ~2.1MB/s and minimal packet loss.
+            # This sleep helps avoid packet loss. Maybe add option to tune it.
+            # No sleep is possibly fastest transfer at the cost of bandwidth (lots of dropped packets)
             if packet_index%10 == 0:
-                time.sleep(0.001)
+                time.sleep(0.005)
         self._send(self.DONE_SENDING)
         
         # HANDLE REREQUESTS
         retries = 3
         while True:
             while retries:
-                data = self._recv(self.SEND_REREQUEST_TIMEOUT)
+                data,_ = self._recv(self.SEND_REREQUEST_TIMEOUT)
                 if data == "TIMEOUT":
                     retries -= 1
                 else: break
@@ -121,39 +119,34 @@ class GGUdp(object):
                 print("Bad packet order? No missing packets packet missed.")
                 break
 
-        tmp = self._recv(self.TIMEOUT_NO_WAIT)
+        tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
         while tmp != "TIMEOUT":
-            tmp = self._recv(self.TIMEOUT_NO_WAIT)
+            tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
         return True
-    
+
     def recv(self, timeout=False):
         # SYNC LOOP
-        if timeout == False:
-            self.s.setblocking(1)
-            if self.server:
-                len_data,self.addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
-            else:
-                len_data,_ = self.s.recvfrom(self.MAX_PACKET_SIZE)
-            self.s.setblocking(0)
-        else:
-            if self.server:
-                len_data,self.addr = self._recv(timeout, True)
-            else:
-                len_data = self._recv(timeout)
+        len_data,addr = self._recv(timeout)
+        if self.server:
+            self.addr = addr
         try:
             len_data = int(len_data)
             self._send(bytearray(str(len_data)))
         except:
+            self.s.close()
+            self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if self.server:
+                self.s.bind((self.ip,self.port))
             return False
         
         # RECEIVE DATA
         data = dict({-1:-1})
         received = 0
         while received < len_data:
-            data_chunk   = self._recv(self.RECV_LOOP_TIMEOUT)
+            data_chunk,_   = self._recv(self.RECV_LOOP_TIMEOUT)
             if data_chunk == "TIMEOUT" or data_chunk == self.DONE_SENDING:
                 break
-            packet_index,data_chunk = self._unpack_packet(data_chunk)
+            packet_index,data_chunk = self.chk_header(data_chunk)
             if packet_index >= 0:
                 data[packet_index] = data_chunk
                 received += len(data_chunk)
@@ -161,7 +154,7 @@ class GGUdp(object):
         # Clear receive buffer of DONE_SENDING and get missing_packet sync
         try:
             while data_chunk == self.DONE_SENDING:
-                data_chunk = self._recv(self.TIMEOUT_NO_WAIT)
+                data_chunk,_ = self._recv(self.TIMEOUT_NO_WAIT)
         except:
             pass
         # SEND REREQUESTS
@@ -185,7 +178,7 @@ class GGUdp(object):
                 break
             # Attempt to receive each missing packet
             for i in missing[1:]:
-                data_chunk = self._recv(self.RECV_REREQUEST_TIMEOUT)
+                data_chunk,_ = self._recv(self.RECV_REREQUEST_TIMEOUT)
                 if data_chunk.startswith(self.OUT_OF_RANGE):
                     d_max = min(d_max, self.struct_unpack(data_chunk[len(self.OUT_OF_RANGE):]))
                     break
@@ -194,7 +187,7 @@ class GGUdp(object):
                     break
                 else:
                     retries = self.REREQUEST_SAFETY
-                    packet_index,data_chunk = self._unpack_packet(data_chunk)
+                    packet_index,data_chunk = self.chk_header(data_chunk)
                     if packet_index >= 0:
                         if data.get(packet_index, False):
                             received -= len(data[packet_index])
@@ -208,9 +201,14 @@ class GGUdp(object):
         else: # No missing packets
             self._send(str(self.MISSING_PACKETS))
 
-        tmp = self._recv(self.TIMEOUT_NO_WAIT)
+        tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
         while tmp != "TIMEOUT":
-            tmp = self._recv(self.TIMEOUT_NO_WAIT)
+            tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
+
+        self.s.close()
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if self.server:
+            self.s.bind((self.ip,self.port))
         
         if retries == 0:
             return False
@@ -222,20 +220,23 @@ class GGUdp(object):
         return bytearray(hashlib.md5(data).digest())
     
     def _send(self, data):
+        self.s.setblocking(1)
         self.s.sendto(data, self.addr)
     
-    def _recv(self, timeout, setaddr=False):
-        data = "TIMEOUT"
-        try:
-            ready = select.select([self.s], [], [], timeout)
-            if ready[0]:
-                data,addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
-        except:
-            pass
-        if setaddr:
-            return data,addr
+    def _recv(self, timeout=False):
+        data,addr = "TIMEOUT",False
+        if timeout == False:
+            self.s.setblocking(1)
+            data,addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
         else:
-            return data
+            self.s.setblocking(0)
+            try:
+                ready = select.select([self.s], [], [], timeout)
+                if ready[0]:
+                    data,addr = self.s.recvfrom(self.MAX_PACKET_SIZE)
+            except:
+                pass
+        return data,addr
     
     def define_globals(self):
         # Special packets
