@@ -1,5 +1,5 @@
 # git-gud-udp
-An attempt at reliable UDP transfer with fairly low overhead. No dependencies, written in 2.7
+An attempt at reliable UDP transfer with fairly low overhead. No dependencies, written in 2.7  
 I was informed this appears to be an implementation of Selective Repeat Error Recovery, so it should be pretty dependable!
 
 # Packet Info
