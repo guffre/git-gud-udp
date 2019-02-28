@@ -1,8 +1,9 @@
 # git-gud-udp
 An attempt at reliable UDP transfer with fairly low overhead. No dependencies, written in 2.7
+I was informed this appears to be an implementation of Selective Repeat Error Recovery, so it should be pretty dependable!
 
 # Packet Info
- [CHECKSUM]([PACKET_NUMBER][DATA])
+ [CHECKSUM]\([PACKET_NUMBER][DATA]\)
  
  Currently, checksum is implemented as an MD5 hash of PACKET_NUMBER+DATA
  Packets are randomly sized between MIN_DATA_SIZE and MAX_DATA_SIZE.
