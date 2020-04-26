@@ -1,5 +1,4 @@
 # git-gud-udp
-<<<<<<< HEAD
 A reliable UDP transfer with fairly low overhead. No dependencies, written in Python 2.7
 Includes optional "secure_send" and "secure_recv" for built-in data-in-transit encryption using Diffie-Hellmann + RC4.
 
@@ -10,10 +9,6 @@ to point to the encryption class of your choice. That class must have three thin
 1) A variable indicating if it is a stream-cipher, ie `self.stream = True`
 2) A `make_key` as a class-method, that creates the key that will be used. The argument is a Python long, and it can return anything that YourEncryption.__init__() will accept as a key.
 3) A class method `crypt`. For stream-ciphers, it must accept individual bytes. For block-ciphers, it must accept arbitrarily-sized data that will be between 3 and `GGUdp.MAX_DATA_SIZE` bytes.
-=======
-An attempt at reliable UDP transfer with fairly low overhead. No dependencies, written in 2.7  
-I was informed this appears to be an implementation of Selective Repeat Error Recovery, so it should be pretty dependable!
->>>>>>> 39b8acbbc10716f7c026d4b4b64b602b8a888127
 
 # Packet Info
  [CHECKSUM]\([PACKET_NUMBER][DATA]\)
