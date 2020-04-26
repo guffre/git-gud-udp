@@ -249,25 +249,25 @@ class GGUdp(object):
         blob, addr = self._recv(timeout)
         if self._server:
             self._addr = addr
-        #try:
-        if encrypted:
-            keygen = DH()
-            len_data = self.__check_dh_exchange(blob, keygen, "SYN")
-            blob = self.__struct_pack(len(keygen.public))
-            blob += keygen.public
-            blob += self.__encrypt(len_data)
-            len_data = self.__struct_unpack(len_data)
-            self._send(blob)
-        else:
-            len_data = int(blob)
-            self._send(bytearray(str(len_data)))
-        # except Exception as e:
-        #     print(e)
-        #     self._s.close()
-        #     self._s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        #     if self._server:
-        #         self._s.bind((self._ip, self._port))
-        #     return False
+        try:
+            if encrypted:
+                keygen = DH()
+                len_data = self.__check_dh_exchange(blob, keygen, "SYN")
+                blob = self.__struct_pack(len(keygen.public))
+                blob += keygen.public
+                blob += self.__encrypt(len_data)
+                len_data = self.__struct_unpack(len_data)
+                self._send(blob)
+            else:
+                len_data = int(blob)
+                self._send(bytearray(str(len_data)))
+        except Exception as e:
+            print(e)
+            self._s.close()
+            self._s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if self._server:
+                self._s.bind((self._ip, self._port))
+            return False
         
         # RECEIVE DATA
         data = dict({-1:-1})
