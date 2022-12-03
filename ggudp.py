@@ -59,7 +59,7 @@ class GGUdp(object):
     """ A protocol wrapper that makes UDP transfers reliable and encrypted.
         PACKET:
             16        4        X
-        [CHECKSUM][PACKET_ID][DATA]
+        [ CHECKSUM ][ PACKET_ID ][ DATA ]
     """
     def __init__(self, ip, port):
         # Special packets
@@ -79,12 +79,13 @@ class GGUdp(object):
         self.MAX_DATA_SIZE   = self.MAX_PACKET_SIZE - self.LEN_HEADERS
 
         # Timeout values
-        self.TIMEOUT_REREQUEST_SAFETY  = 10
+        self.TIMEOUT_REREQUEST_COUNT  = 4
         self.TIMEOUT_SYNC      = 1
         self.TIMEOUT_RECV_LOOP = 5
         self.TIMEOUT_NO_WAIT   = 0.1
         self.TIMEOUT_SEND_REREQUEST = 8 # Must be higher than RECV_REREQUEST
         self.TIMEOUT_RECV_REREQUEST = 0.5
+        self.TIMEOUT_INDICATOR = "TIMEOUT"
         
         # Socket information
         self._s    = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -110,31 +111,42 @@ class GGUdp(object):
     def secure_recv(self, timeout=False):
         return self.recv(timeout, True)
 
+    def clear_buffer(self):
+        tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
+        while tmp != self.TIMEOUT_INDICATOR:
+            tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
+            time.sleep(0.05)
+        else:
+            return
+        
+
     def send(self, data, encrypted=False):
+        self.clear_buffer()
         data = bytearray(data)
         # SYNC LOOP
-        for _ in range(3):
+        for i in range(3):
             if encrypted:
-                # SYN: [KEY LENGTH][KEY][DATA LENGTH]
-                # ACK: [KEY LENGTH][KEY][ENCRYPTED DATA LENGTH]
+                # SYN: [ KEY LENGTH ][ KEY ][ DATA LENGTH (In plaintext) ]
+                # ACK: [ KEY LENGTH ][ KEY ][ DATA LENGTH (Encrypted)    ]
                 keygen = DiffieHellman()
                 blob = self._struct_pack(len(keygen.public))
                 blob += keygen.public
                 blob += self._struct_pack(len(data))
-                self._send(blob)
+                self._send(self._add_padding(blob))
                 response,_ = self._recv(self.TIMEOUT_SYNC)
                 if self._check_dh_exchange(response, keygen, "ACK") == len(data):
                     break
             else:
-                self._send(bytearray(str(len(data))))
-                response,_ = self._recv(self.TIMEOUT_SYNC)
-                if response == bytearray(str(len(data))):
+                blob = self._struct_pack(len(data))
+                self._send(self._add_padding(blob))
+                response,_ = self._recv(self.TIMEOUT_SYNC + i)
+                if response[:4] == self._struct_pack(len(data)):
                     break
         else:
             print("Failed to sync with server")
             return False
-        
-        # SEND_DATA: [CHECKSUM]([PACKET_ID][DATA])
+
+        # SEND_DATA: [ CHECKSUM ][ PACKET_ID ][ DATA ]
         data_index   = 0
         packet_index = 0
         data_chunks = dict()
@@ -142,7 +154,7 @@ class GGUdp(object):
             # Assemble packet data
             pktsize   = random.randint(self.MIN_DATA_SIZE, self.MAX_DATA_SIZE)
             datachunk = data[data_index:data_index + pktsize]
-            # ENCRYPT DATA BEFORE SENDING
+            # Encrypt data before sending
             if encrypted:
                 datachunk = self._encrypt(datachunk)
             packet = self._add_header(datachunk, packet_index)
@@ -157,14 +169,15 @@ class GGUdp(object):
             # No sleep is possibly fastest transfer at the cost of bandwidth (lots of dropped packets)
             if packet_index % 10 == 0:
                 time.sleep(0.005)
-        self._send(self.PKT_DONE_SENDING)
+        
+        # Do not clear buffer here. The only packets recv() will send back should be re-requests
         
         # HANDLE REREQUESTS
-        retries = 3
         while True:
+            retries = self.TIMEOUT_REREQUEST_COUNT
             while retries:
                 data,_ = self._recv(self.TIMEOUT_SEND_REREQUEST)
-                if data == "TIMEOUT":
+                if data == self.TIMEOUT_INDICATOR:
                     retries -= 1
                 else: break
             if data.startswith(self.PKT_MISSING):
@@ -183,19 +196,19 @@ class GGUdp(object):
                          time.sleep(0.001)
                     if to_send.startswith(self.PKT_OUT_OF_RANGE):
                         break
-            else:
-                print("Bad packet order? No missing packets packet missed.")
+            elif data.startswith(self.PKT_DONE_SENDING):
+                self._send(self._add_padding(self.PKT_DONE_SENDING))
                 break
-
-        tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
-        while tmp != "TIMEOUT":
-            tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
+            else:
+                print("Error: Bad packet order? Packet received is not PKT_MISSING or PKT_DONE_SENDING")
+                return False
         return True
 
     def recv(self, timeout=False, encrypted=False):
+        self.clear_buffer()
         # SYNC LOOP
-        # SYN: [KEY LENGTH][KEY][DATA LENGTH]
-        # ACK: [KEY LENGTH][KEY][ENCRYPTED DATA LENGTH]
+        # SYN: [ KEY LENGTH ][ KEY ][ DATA LENGTH (In plaintext) ]
+        # ACK: [ KEY LENGTH ][ KEY ][ DATA LENGTH (Encrypted)    ]
         blob, addr = self._recv(timeout)
         if self._server:
             self._addr = addr
@@ -203,14 +216,14 @@ class GGUdp(object):
             if encrypted:
                 keygen = DiffieHellman()
                 len_data = self._check_dh_exchange(blob, keygen, "SYN")
-                blob = self._struct_pack(len(keygen.public))
+                blob  = self._struct_pack(len(keygen.public))
                 blob += keygen.public
                 blob += self._encrypt(len_data)
                 len_data = self._struct_unpack(len_data)
-                self._send(blob)
             else:
-                len_data = int(blob)
-                self._send(bytearray(str(len_data)))
+                blob = blob[:4]
+                len_data = self._struct_unpack(blob)
+            self._send(self._add_padding(blob))
         except Exception as e:
             print(e)
             return False
@@ -220,25 +233,22 @@ class GGUdp(object):
         received = 0
         while received < len_data:
             data_chunk,_   = self._recv(self.TIMEOUT_RECV_LOOP)
-            if data_chunk == "TIMEOUT" or data_chunk == self.PKT_DONE_SENDING:
+            if data_chunk == self.TIMEOUT_INDICATOR:
                 break
             packet_index,data_chunk = self._chk_header(data_chunk)
             if packet_index >= 0:
                 data[packet_index] = data_chunk
                 received += len(data_chunk)
 
-        # Clear receive buffer of DONE_SENDING and get missing_packet sync
-        try:
-            while data_chunk == self.PKT_DONE_SENDING:
-                data_chunk,_ = self._recv(self.TIMEOUT_NO_WAIT)
-        except:
-            pass
+        # Clear receive buffer
+        self.clear_buffer()
+
         # SEND REREQUESTS
         d_max = 0
-        retries = self.TIMEOUT_REREQUEST_SAFETY
+        retries = self.TIMEOUT_REREQUEST_COUNT
         while (received != len_data):
-            print(len_data, received)
-            missing_packet_max = 1 + ((len_data - received) / self.MIN_DATA_SIZE)
+            # Adding 2 in edge-case of 1 total packets and 0 received. max(data) would be -1, which would result in missing "0"
+            missing_packet_max = 2 + ((len_data - received) / self.MIN_DATA_SIZE)
             missing = [self.PKT_MISSING]
             # Get list of missing chunks
             if not d_max:
@@ -259,11 +269,11 @@ class GGUdp(object):
                 if data_chunk.startswith(self.PKT_OUT_OF_RANGE):
                     d_max = min(d_max, self._struct_unpack(data_chunk[len(self.PKT_OUT_OF_RANGE):]))
                     break
-                if data_chunk == "TIMEOUT":
+                if data_chunk == self.TIMEOUT_INDICATOR:
                     retries -= 1
                     break
                 else:
-                    retries = self.TIMEOUT_REREQUEST_SAFETY
+                    retries = self.TIMEOUT_REREQUEST_COUNT
                     packet_index,data_chunk = self._chk_header(data_chunk)
                     if packet_index >= 0:
                         if data.get(packet_index, False):
@@ -276,11 +286,12 @@ class GGUdp(object):
                 print("Didn't receive all data")
                 break
         else: # No missing packets
-            self._send(str(self.PKT_MISSING))
-
-        tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
-        while tmp != "TIMEOUT":
-            tmp,_ = self._recv(self.TIMEOUT_NO_WAIT)
+            self.clear_buffer()
+            for i in range(self.TIMEOUT_REREQUEST_COUNT):
+                self._send(self._add_padding(self.PKT_DONE_SENDING))
+                response,_ = self._recv(self.TIMEOUT_SYNC + i)
+                if response.startswith(self.PKT_DONE_SENDING):
+                    break
 
         if retries == 0:
             return False
@@ -311,6 +322,14 @@ class GGUdp(object):
         data_chunk = "{}{}{}".format(checksum, packet_id, data)
         return data_chunk
     
+    def _add_padding(self, data):
+        # Pads out data to random length that fits into a packet
+        data_len = len(data)
+        random.seed(random._urandom(4))
+        if self.MIN_DATA_SIZE/2 - data_len > 0:
+            data = bytearray(data) + bytearray(random._urandom(random.randrange(self.MAX_DATA_SIZE/2 - data_len)))
+        return data
+   
     def _chk_header(self, data):
         try:
             checksum = bytearray(data[:self.LEN_CHECKSUM])
@@ -334,14 +353,13 @@ class GGUdp(object):
         key = keygen.get(int(binascii.hexlify(sharedkey), 16))
         key = self.encryption.make_key(key)
         self._crypt = self.encryption(key)
+        len_data = data[keylen+4:keylen+8]
         if pkt_type == "SYN":
-            len_data = data[-4:]
-            return len_data
+            response = len_data
         else: # pkt_type == ACK
-            data = data[-4:]
-            data = self._encrypt(data)
-            response = self._struct_unpack(data)
-            return response
+            len_data = self._encrypt(len_data)
+            response = self._struct_unpack(len_data)
+        return response
 
     def _checksum(self, data):
         return bytearray(hashlib.md5(data).digest())
@@ -351,7 +369,7 @@ class GGUdp(object):
         self._s.sendto(data, self._addr)
     
     def _recv(self, timeout=False):
-        data, addr = "TIMEOUT", False
+        data, addr = self.TIMEOUT_INDICATOR, False
         if timeout == False:
             self._s.setblocking(1)
             data, addr = self._s.recvfrom(self.MAX_PACKET_SIZE)
@@ -361,6 +379,7 @@ class GGUdp(object):
                 ready = select.select([self._s], [], [], timeout)
                 if ready[0]:
                     data, addr = self._s.recvfrom(self.MAX_PACKET_SIZE)
-            except:
+            except Exception as e:
+                print("Exception:", e)
                 pass
         return data, addr
